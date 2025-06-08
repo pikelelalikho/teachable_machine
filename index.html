@@ -5,41 +5,41 @@
     <style>
         body {
             font-family: 'Segoe UI', sans-serif;
-            margin: 0;
             background: #eef1f7;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 40px 20px;
+            padding: 30px 20px;
             background-image: url('images/background.jpg'); /* Adjust the path based on your directory */
             background-size: cover; /* Makes the image cover the entire page */
             background-position: center; /* Centers the image */
             background-repeat: no-repeat; /* Prevents repeating */
         }
-        h1 {
-            color: #2c3e50;
-
-        }
 
         .video-background {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                z-index: -1;
-                opacity: 0.46; /* Adjust the opacity value */
-     
-        }
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+            opacity: 0.30; /* Adjust the opacity value */
+    }
         .card {
             background: white;
             border-radius: 12px;
             padding: 24px;
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
-            margin: 20px 0;
+            margin: 20px;
             width: 360px;
             text-align: center;
+        }
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
         }
         button, input[type="file"] {
             padding: 10px 16px;
@@ -53,27 +53,21 @@
         button:hover {
             background: #357ae8;
         }
-        #webcam-container, #uploaded-image {
-            margin-top: 16px;
-        }
-        #uploaded-image {
-            max-width: 100%;
-            border-radius: 8px;
-        }
-        #label-container .result-tag {
+        .result-tag {
             display: inline-block;
-            background: #dfe6f3;
-            color: #2c3e50;
             padding: 6px 12px;
             border-radius: 20px;
             margin: 6px 4px;
             font-size: 0.95rem;
             font-weight: 500;
         }
-        #last-result {
-            margin-top: 20px;
-            font-weight: bold;
-            color: #2c3e50;
+        .green { background: #d4edda; color: #155724; }
+        .red { background: #f8d7da; color: #721c24; }
+        .orange { background: #fff3cd; color: #856404; }
+        #uploaded-image {
+            max-width: 100%;
+            display: none;
+            border-radius: 8px;
         }
         #history ul {
             max-height: 150px;
@@ -81,145 +75,203 @@
             padding-left: 20px;
             text-align: left;
         }
+        #chart-container {
+            width: 360px;
+        }
+        .custom-alert {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #ff4d4f;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+            font-size: 16px;
+            z-index: 9999;
+            animation: fadeOut 3s ease forwards;
+        }
+        @keyframes fadeOut {
+            0% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; top: 0; }
+        }
     </style>
 </head>
 <body>
+    <h1>Cup Detection Model</h1>
     <video class="video-background" autoplay loop muted>
-    <source src="detection.mp4" type="video/mp4">
-    Your browser does not support the video tag.
-  </video>
-
-    <h1>Cup Detection Demo</h1>
+        <source src="detection.mp4" type="video/mp4">
+        background will Demo how our project will work but it will be a cup dectection.
+    </video>
 
     <div class="card">
-        <div>Choose Mode: Webcam or Upload</div>
         <button onclick="init()">Start Webcam</button>
         <button onclick="stopWebcam()">Stop Webcam</button>
         <input type="file" accept="image/*" onchange="handleImageUpload(event)">
-        <img id="uploaded-image" style="display:none;" />
-        <button id="submit-button" style="display:none;" onclick="submitUploadedImage()">Submit for Detection</button>
+        <button id="detect-button" style="display:none;" onclick="submitUploadedImage()">Run Detection</button>
+        <button id="defect-button" style="display:none;" onclick="runDefectDetection()">Run Defect Check</button>
         <div id="webcam-container"></div>
+        <img id="uploaded-image" />
         <div id="label-container"></div>
     </div>
 
     <div class="card" id="last-result">Last Result: None</div>
-    <div class="card" id="history">
-        <h3>Detection History</h3>
-        <ul id="history-list"></ul>
-    </div>
 
-    <p>Train your model using only <strong>cup images</strong> to avoid detecting people.</p>
+    <div class="row">
+        <div class="card" id="chart-container">
+            <h3>Live Detection Chart</h3>
+            <canvas id="detectionChart"></canvas>
+            <button onclick="resetChart()">Reset Chart</button>
+        </div>
+
+        <div class="card">
+            <h3>Detection History</h3>
+            <ul id="history-list"></ul>
+            <button onclick="clearHistory()">Clear History</button>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
-
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         const URL = "https://teachablemachine.withgoogle.com/models/8IZ9piU9o/";
         let model, webcam, labelContainer, maxPredictions;
-        let lastClass = "";
-        let loopRunning = false;
-        let animationId = null;
-        let uploadedImage = null;
+        let uploadedCanvas = null;
+        let loopActive = false;
+        const detectionCounts = { "defect": 0, "cup": 0, "no cup": 0 };
+        let chart;
+
+        function showCustomAlert(message) {
+            const alertBox = document.createElement("div");
+            alertBox.className = "custom-alert";
+            alertBox.innerText = message;
+            document.body.appendChild(alertBox);
+            setTimeout(() => alertBox.remove(), 3000);
+        }
+
+        function updateChart() {
+            if (!chart) {
+                const ctx = document.getElementById("detectionChart").getContext("2d");
+                chart = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['Defect', 'Cup', 'No Cup'],
+                        datasets: [{
+                            data: [0, 0, 0],
+                            backgroundColor: ['#f8d7da', '#d4edda', '#fff3cd']
+                        }]
+                    },
+                    options: { responsive: true }
+                });
+            } else {
+                chart.data.datasets[0].data = [detectionCounts.defect, detectionCounts.cup, detectionCounts["no cup"]];
+                chart.update();
+            }
+        }
+
+        function resetChart() {
+            detectionCounts.defect = 0;
+            detectionCounts.cup = 0;
+            detectionCounts["no cup"] = 0;
+            updateChart();
+        }
+
+        function clearHistory() {
+            document.getElementById("history-list").innerHTML = "";
+        }
 
         async function init() {
             const modelURL = URL + "model.json";
             const metadataURL = URL + "metadata.json";
-
-            if (!model) {
-                model = await tmImage.load(modelURL, metadataURL);
-                maxPredictions = model.getTotalClasses();
-            }
-
-            stopWebcam(); // stop previous session
+            model = await tmImage.load(modelURL, metadataURL);
+            maxPredictions = model.getTotalClasses();
 
             const flip = true;
             webcam = new tmImage.Webcam(200, 200, flip);
             await webcam.setup();
             await webcam.play();
-            loopRunning = true;
-            animationId = window.requestAnimationFrame(loop);
+            loopActive = true;
+            window.requestAnimationFrame(loop);
 
-            document.getElementById("uploaded-image").style.display = "none";
-            document.getElementById("submit-button").style.display = "none";
             document.getElementById("webcam-container").innerHTML = "";
             document.getElementById("webcam-container").appendChild(webcam.canvas);
             labelContainer = document.getElementById("label-container");
+            labelContainer.innerHTML = "";
         }
 
         function stopWebcam() {
-            if (webcam && webcam.stream) {
-                loopRunning = false;
+            if (webcam && webcam.stop) {
                 webcam.stop();
-                if (animationId) {
-                    cancelAnimationFrame(animationId);
-                }
                 document.getElementById("webcam-container").innerHTML = "";
             }
+            loopActive = false;
         }
 
         async function loop() {
-            if (!loopRunning) return;
+            if (!loopActive) return;
             webcam.update();
             await predict(webcam.canvas);
-            animationId = window.requestAnimationFrame(loop);
-        }
-
-        async function handleImageUpload(event) {
-            stopWebcam(); // make sure webcam is stopped
-            const file = event.target.files[0];
-            if (!file) return;
-
-            const imgElement = document.getElementById("uploaded-image");
-            imgElement.style.display = "block";
-            document.getElementById("submit-button").style.display = "inline-block";
-
-            imgElement.src = URL.createObjectURL(file);
-
-            imgElement.onload = () => {
-                uploadedImage = imgElement;
-            };
-        }
-
-        async function submitUploadedImage() {
-            if (!uploadedImage) return;
-
-            if (!model) {
-                const modelURL = URL + "model.json";
-                const metadataURL = URL + "metadata.json";
-                model = await tmImage.load(modelURL, metadataURL);
-                maxPredictions = model.getTotalClasses();
-            }
-
-            labelContainer = document.getElementById("label-container");
-            await predict(uploadedImage);
+            window.requestAnimationFrame(loop);
         }
 
         async function predict(input) {
             const prediction = await model.predict(input);
-            prediction.sort((a, b) => b.probability - a.probability);
-
-            const topClass = prediction[0].className;
-            const topProb = prediction[0].probability.toFixed(2);
-
             labelContainer.innerHTML = "";
-            for (let i = 0; i < maxPredictions; i++) {
-                const p = prediction[i];
+            prediction.forEach(p => {
                 const tag = document.createElement("div");
                 tag.className = "result-tag";
+                tag.classList.add(p.className.toLowerCase().includes("defect") ? "red" : p.className.toLowerCase().includes("no") ? "orange" : "green");
                 tag.textContent = `${p.className}: ${p.probability.toFixed(2)}`;
                 labelContainer.appendChild(tag);
-            }
+                if (p.probability > 0.5 && loopActive) {
+                    const classKey = p.className.toLowerCase().includes("defect") ? "defect" : p.className.toLowerCase().includes("no") ? "no cup" : "cup";
+                    detectionCounts[classKey]++;
+                    const li = document.createElement("li");
+                    li.textContent = `${new Date().toLocaleTimeString()} - ${p.className}`;
+                    document.getElementById("history-list").prepend(li);
+                    updateChart();
+                    document.getElementById("last-result").textContent = `Last Result: ${p.className}`;
+                    if (classKey === "defect") {
+                        showCustomAlert("⚠️ Defect Detected!");
+                    }
+                }
+            });
+        }
 
-            // Always update history (even if same class)
-            lastClass = topClass;
-            document.getElementById("last-result").innerText = "Last Result: " + topClass;
+        function handleImageUpload(event) {
+            stopWebcam();
+            const file = event.target.files[0];
+            if (!file) return;
+            const img = document.getElementById("uploaded-image");
+            img.src = URL.createObjectURL(file);
+            img.style.display = "block";
+            img.onload = async () => {
+                const canvas = document.createElement("canvas");
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0);
+                uploadedCanvas = canvas;
+            };
+            document.getElementById("detect-button").style.display = "inline-block";
+            document.getElementById("defect-button").style.display = "inline-block";
+        }
 
-            const li = document.createElement("li");
-            li.textContent = `${new Date().toLocaleTimeString()} - ${topClass}`;
-            document.getElementById("history-list").prepend(li);
+        async function submitUploadedImage() {
+            if (uploadedCanvas) await predict(uploadedCanvas);
+        }
 
-            if (topClass.toLowerCase().includes("defect")) {
-                alert("⚠️ Defect detected!");
+        async function runDefectDetection() {
+            if (!uploadedCanvas) return;
+            const prediction = await model.predict(uploadedCanvas);
+            const defect = prediction.find(p => p.className.toLowerCase().includes("defect"));
+            if (defect && defect.probability >= 0.5) {
+                showCustomAlert("⚠️ Defect Detected with probability: " + defect.probability.toFixed(2));
+            } else {
+                showCustomAlert("✅ No defect detected confidently.");
             }
         }
     </script>
